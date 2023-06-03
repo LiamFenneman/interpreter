@@ -4,7 +4,7 @@
 /// The token type.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Token {
-    // Identifiers + literals
+    // Identifiers + Literals
     Ident(String),
     Int(String),
 
@@ -29,12 +29,12 @@ pub enum Token {
 }
 
 impl Token {
-    pub(crate) fn keyword(str: &str) -> Option<Token> {
+    pub(crate) fn lookup_ident(str: &str) -> Option<Token> {
         use Token::*;
         return match str {
             "fn" => Some(Function),
             "let" => Some(Let),
-            _ => None,
+            _ => Some(Ident(str.to_string())),
         };
     }
 }
@@ -82,51 +82,114 @@ impl<'a> Lexer<'a> {
     pub fn next_token(self) -> (Self, Option<Token>) {
         use Token::*;
 
+        let lexer = self.skip_whitespace();
+
         // skip whitespace
-        return match self.ch {
-            None => (self, None),
+        return match lexer.ch {
+            None => (lexer, None),
             Some(ch) => match ch {
-                '=' => (self.advance(), Some(Assign)),
-                '+' => (self.advance(), Some(Plus)),
-                ',' => (self.advance(), Some(Comma)),
-                ';' => (self.advance(), Some(Semicolon)),
-                '(' => (self.advance(), Some(LParen)),
-                ')' => (self.advance(), Some(RParen)),
-                '{' => (self.advance(), Some(LBrace)),
-                '}' => (self.advance(), Some(RBrace)),
-                _ch => (self.advance(), Some(Illegal)),
+                // Operators
+                '=' => (lexer.advance(), Some(Assign)),
+                '+' => (lexer.advance(), Some(Plus)),
+                ',' => (lexer.advance(), Some(Comma)),
+                ';' => (lexer.advance(), Some(Semicolon)),
+                '(' => (lexer.advance(), Some(LParen)),
+                ')' => (lexer.advance(), Some(RParen)),
+                '{' => (lexer.advance(), Some(LBrace)),
+                '}' => (lexer.advance(), Some(RBrace)),
+
+                // Keywords + Identifiers + Literals
+                ch if Lexer::is_identifier(ch) => lexer.read_identifier(),
+                ch if Lexer::is_number(ch) => lexer.read_number(),
+
+                // Special
+                _ch => (lexer.advance(), Some(Illegal)),
             },
         };
     }
 
     /// Advance the lexer.
     pub(crate) fn advance(self) -> Self {
+        return match self.pos {
+            p if p >= self.input.len() => Lexer {
+                input: self.input,
+                pos: self.pos,
+                ch: None,
+            },
+            _ => Lexer {
+                input: self.input,
+                pos: self.pos + 1,
+                ch: self.input.chars().nth(self.pos + 1),
+            },
+        };
+    }
+
+    /// Advance the lexer until the next non-whitespace character.
+    pub(crate) fn skip_whitespace(self) -> Self {
         let mut lexer = self;
-        lexer.pos += 1;
-        lexer.ch = lexer.input.chars().nth(lexer.pos);
+
+        // TODO: replace with pattern matching
+        while lexer.ch.is_some() && lexer.ch.unwrap().is_whitespace() {
+            lexer = lexer.advance();
+        }
+
         return lexer;
+    }
+
+    /// Advance the lexer until the condition is false.
+    pub(crate) fn seek_while(self, cond: impl Fn(char) -> bool) -> Self {
+        let mut lexer = self;
+
+        // recursively loop until the condition is false or there are no characters left
+        if let Some(ch) = lexer.ch {
+            if cond(ch) {
+                lexer = lexer.advance();
+                return lexer.seek_while(cond);
+            }
+        }
+
+        return lexer;
+    }
+
+    /// Read characters while the condition is true.
+    pub(crate) fn read_while(self, cond: impl Fn(char) -> bool) -> (Self, String) {
+        let pos_start = self.pos;
+        let lexer = self.seek_while(cond);
+        let pos_end = lexer.pos;
+        return (lexer, lexer.input[pos_start..pos_end].to_string());
+    }
+
+    /// Read an identifier.
+    pub(crate) fn read_identifier(self) -> (Self, Option<Token>) {
+        let (lexer, ident) = self.read_while(Lexer::is_identifier);
+        assert!(!ident.is_empty());
+        return (lexer, Token::lookup_ident(&ident));
+    }
+
+    /// Read a number.
+    pub(crate) fn read_number(self) -> (Self, Option<Token>) {
+        let (lexer, number) = self.read_while(Lexer::is_number);
+        assert!(!number.is_empty());
+        return (lexer, Some(Token::Int(number)));
+    }
+
+    /// Check if the current character *could* be a part of an identifier.
+    pub(crate) fn is_identifier(ch: char) -> bool {
+        return ch == '_' || ch.is_alphabetic();
+    }
+
+    /// Check if the current character *could* be a part of a number.
+    pub(crate) fn is_number(ch: char) -> bool {
+        return ch.is_numeric();
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
+    use Token::*;
 
-    #[test]
-    fn single_chars() {
-        let input = "=+(){},;";
-
-        let tests = vec![
-            Token::Assign,
-            Token::Plus,
-            Token::LParen,
-            Token::RParen,
-            Token::LBrace,
-            Token::RBrace,
-            Token::Comma,
-            Token::Semicolon,
-        ];
-
+    fn run_test(input: &str, tests: Vec<Token>) {
         let mut lexer = Lexer::new(input);
 
         for (i, expected) in tests.iter().enumerate() {
@@ -137,5 +200,69 @@ mod test {
 
         let (_, tok) = lexer.next_token();
         assert_eq!(tok, None)
+    }
+
+    #[test]
+    fn single_chars() {
+        let input = "=+(){},;";
+
+        let tests = vec![
+            Assign, Plus, LParen, RParen, LBrace, RBrace, Comma, Semicolon,
+        ];
+
+        run_test(input, tests);
+    }
+
+    #[test]
+    fn code() {
+        let input = r"
+            let five = 5;
+            let ten = 10;
+            let add = fn(x, y) {
+                x + y;
+            };
+            let result = add(five, ten);
+        ";
+
+        let tests = vec![
+            Let,
+            Ident("five".into()),
+            Assign,
+            Int("5".into()),
+            Semicolon,
+            Let,
+            Ident("ten".into()),
+            Assign,
+            Int("10".into()),
+            Semicolon,
+            Let,
+            Ident("add".into()),
+            Assign,
+            Function,
+            LParen,
+            Ident("x".into()),
+            Comma,
+            Ident("y".into()),
+            RParen,
+            LBrace,
+            Ident("x".into()),
+            Plus,
+            Ident("y".into()),
+            Semicolon,
+            RBrace,
+            Semicolon,
+            Let,
+            Ident("result".into()),
+            Assign,
+            Ident("add".into()),
+            LParen,
+            Ident("five".into()),
+            Comma,
+            Ident("ten".into()),
+            RParen,
+            Semicolon,
+        ];
+
+        run_test(input, tests);
     }
 }
