@@ -23,13 +23,9 @@ pub fn repl(r: Stdin, mut w: Stdout) -> Result<()> {
             break;
         }
 
-        // initialize the lexer
-        let mut lexer = Lexer::new(&line);
-
-        // print the tokens
-        while let (lex, Some(token)) = lexer.next_token() {
+        let lexer = Lexer::new(&line);
+        for token in lexer {
             writeln!(w, "{:?}", token)?;
-            lexer = lex;
         }
     }
 

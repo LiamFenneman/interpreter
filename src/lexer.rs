@@ -231,6 +231,28 @@ impl<'a> Lexer<'a> {
     }
 }
 
+pub struct IntoIter<'a>(Lexer<'a>);
+
+impl<'a> Iterator for IntoIter<'a> {
+    type Item = Token;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (lex, tok) = self.0.next_token();
+        self.0 = lex;
+        return tok;
+    }
+}
+
+impl<'a> IntoIterator for Lexer<'a> {
+    type Item = Token;
+
+    type IntoIter = IntoIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        return IntoIter(self);
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
