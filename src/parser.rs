@@ -42,22 +42,32 @@ pub(crate) struct Ident {
 pub struct Parser<'a> {
     pub(crate) lexer: Lexer<'a>,
     pub(crate) cur: Option<Token>,
+    pub(crate) errors: Vec<Error>,
 }
 
 impl<'a> Parser<'a> {
     /// Create a new parser from source code.
     pub fn new(source: &'a str) -> Self {
         let lexer = Lexer::new(source);
-        return Self { lexer, cur: None }.next_token();
+        return Self {
+            lexer,
+            cur: None,
+            errors: Vec::new(),
+        }
+        .next_token();
     }
 
     fn next_token(self) -> Self {
         let (lexer, cur) = self.lexer.next_token();
-        return Self { lexer, cur };
+        return Self {
+            lexer,
+            cur,
+            errors: self.errors,
+        };
     }
 
     /// Parse the source code into an AST using a recursive descent parser strategy.
-    pub fn parse(self) -> Result<Ast> {
+    pub fn parse(self) -> (Ast, Vec<Error>) {
         let mut ast = Ast {
             statements: Vec::new(),
         };
@@ -66,46 +76,50 @@ impl<'a> Parser<'a> {
         let mut stmt;
         while p.cur.is_some() {
             (p, stmt) = p.parse_statement();
-            ast.statements.push(dbg!(stmt?));
+            if let Some(s) = stmt {
+                ast.statements.push(s);
+            }
             p = p.next_token();
         }
 
-        return Ok(ast);
+        return (ast, p.errors);
     }
 
-    fn parse_statement(self) -> (Self, Result<Statement>) {
+    fn parse_statement(self) -> (Self, Option<Statement>) {
         return match self.cur {
             Some(Token::Let) => {
                 let (p, s) = self.parse_let_statement();
                 return (p, s.map(|s| s.into()));
             }
-            _ => {
-                let tok = self.cur.clone();
-                (self, Err(StatementError::InvalidToken(tok).into()))
-            }
+            _ => match self.cur.clone() {
+                None => (self.with_err(Error::UnexpectedEof), None),
+                Some(tok) => (self.with_err(Error::InvalidToken(tok)), None),
+            },
         };
     }
 
-    fn parse_let_statement(self) -> (Self, Result<LetStatement>) {
+    fn parse_let_statement(self) -> (Self, Option<LetStatement>) {
         let p = self;
 
         // the current token is `Let`
-        let Some(cur) = p.cur.clone() else {
-            return (p, Err(LetStatementError::MissingLet.into()));
-        };
-        let p = p.next_token();
+        let p = p.expect_token(Token::Let);
 
         // the next token should always be an `Ident`
         let Some(Token::Ident(ident)) = p.cur.clone() else {
-            let tok = p.cur.clone();
-            return (p, Err(LetStatementError::InvalidIdent(tok).into()));
+            let err = match p.cur.clone() {
+                None => Error::UnexpectedEof,
+                Some(tok) => Error::InvalidToken(tok),
+            };
+
+            return (p.with_err(err), None);
         };
 
         let mut p = p.next_token();
         let mut expr = Expression(Vec::new());
         loop {
             let Some(tok) = p.cur.clone() else {
-                return (p, Err(LetStatementError::InvalidEof.into()));
+                p.errors.push(Error::UnexpectedEof);
+                return (p, None);
             };
 
             if tok == Token::Semicolon {
@@ -118,8 +132,8 @@ impl<'a> Parser<'a> {
 
         return (
             p,
-            Ok(LetStatement {
-                token: cur,
+            Some(LetStatement {
+                token: Token::Let,
                 ident: Ident {
                     token: Token::Ident(ident),
                 },
@@ -127,32 +141,43 @@ impl<'a> Parser<'a> {
             }),
         );
     }
+
+    fn expect_token(self, tok: Token) -> Self {
+        return match self.cur.clone() {
+            None => self.with_err(Error::UnexpectedEof),
+            Some(cur) if cur != tok => self.with_err(Error::UnexpectedToken(cur, tok)),
+            _ => self.next_token(),
+        };
+    }
+
+    /// Add an error to the parser.
+    pub(crate) fn with_err(self, err: Error) -> Self {
+        let mut p = self;
+        p.errors.push(err);
+        return p;
+    }
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum Error {
-    #[error("parse statement error: {0}")]
-    StatementError(#[from] StatementError),
-    #[error("parse let statement error: {0}")]
-    LetStatementError(#[from] LetStatementError),
-}
+    /// An unexpected token was found.
+    ///
+    /// Left: found token, Right: expected token.
+    #[error("unexpected token: {0:?}, expected: {1:?}")]
+    UnexpectedToken(Token, Token),
 
-#[derive(Debug, Error)]
-pub enum StatementError {
-    #[error("invalid token: {0:?}")]
-    InvalidToken(Option<Token>),
-}
+    /// An unexpected end of file was found.
+    #[error("unexpected end of file")]
+    UnexpectedEof,
 
-#[derive(Debug, Error)]
-pub enum LetStatementError {
-    #[error("missing `let` keyword")]
-    MissingLet,
+    /// An invalid token was found.
+    ///
+    /// This should be used when the expected token contains a value (e.g. Ident)
+    /// or when there is a range of valid tokens.
     #[error("invalid identifier: {0:?}")]
-    InvalidIdent(Option<Token>),
-    #[error("invalid end of file")]
-    InvalidEof,
+    InvalidToken(Token),
 }
 
 #[cfg(test)]
@@ -195,13 +220,29 @@ mod test {
             ],
         };
 
-        let ast = Parser::new(source).parse();
+        let (ast, err) = Parser::new(source).parse();
+        assert_eq!(ast, expected);
+        assert!(err.is_empty());
+    }
 
-        if ast.is_err() {
-            println!("ERROR: {}", ast.unwrap_err());
-            panic!("AST is ERROR");
-        }
+    #[test]
+    fn errors() {
+        use Error::*;
 
-        assert_eq!(ast.unwrap(), expected);
+        let source = r"
+            let x 5;
+            let = 10;
+            let 838383;
+        ";
+
+        let expected = vec![
+            UnexpectedToken(T::Int("5".into()), T::Assign),
+            InvalidToken(T::Assign),
+            InvalidToken(T::Int("838383".into())),
+        ];
+
+        let (ast, err) = Parser::new(source).parse();
+        assert_eq!(err, expected);
+        assert!(ast.statements.is_empty());
     }
 }
