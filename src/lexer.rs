@@ -61,11 +61,11 @@ impl Token {
 ///
 /// The lexer is responsible for tokenizing the input source code.
 /// The lexer is implemented as a state machine.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Lexer<'a> {
     input: &'a str,
-    pos: usize,
-    ch: Option<char>,
+    pub(crate) pos: usize,
+    pub(crate) ch: Option<char>,
 }
 
 impl std::fmt::Debug for Lexer<'_> {
