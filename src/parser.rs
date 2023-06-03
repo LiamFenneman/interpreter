@@ -89,7 +89,13 @@ impl<'a> Parser<'a> {
         return match self.cur {
             Some(Token::Let) => {
                 let (p, s) = self.parse_let_statement();
-                return (p, s.map(|s| s.into()));
+                return match s {
+                    Some(stmt) => (p, Some(stmt.into())),
+                    None => (
+                        p.skip_while(|t| t.is_some_and(|t| t.clone() != Token::Semicolon)),
+                        None,
+                    ),
+                };
             }
             _ => match self.cur.clone() {
                 None => (self.with_err(Error::UnexpectedEof), None),
@@ -102,7 +108,10 @@ impl<'a> Parser<'a> {
         let p = self;
 
         // the current token is `Let`
-        let p = p.expect_token(Token::Let);
+        let (p, err) = p.expect_token(Token::Let);
+        if err {
+            return (p, None);
+        }
 
         // the next token should always be an `Ident`
         let Some(Token::Ident(ident)) = p.cur.clone() else {
@@ -113,22 +122,36 @@ impl<'a> Parser<'a> {
 
             return (p.with_err(err), None);
         };
+        let p = p.next_token();
 
-        let mut p = p.next_token();
-        let mut expr = Expression(Vec::new());
-        loop {
-            let Some(tok) = p.cur.clone() else {
+        // the next token should always be an `=`
+        let (p, err) = p.expect_token(Token::Assign);
+        if err {
+            return (p, None);
+        }
+
+        // loop over all tokens until we find a semicolon
+        let (p, expr) = {
+            let mut p = p;
+            let mut expr = Expression(Vec::new());
+
+            loop {
+                let Some(tok) = p.cur.clone() else {
                 p.errors.push(Error::UnexpectedEof);
                 return (p, None);
             };
 
-            if tok == Token::Semicolon {
-                break;
+                if tok == Token::Semicolon {
+                    // Note: we don't add the semicolon here because it is not needed in the AST
+                    break;
+                }
+
+                expr.0.push(tok);
+                p = p.next_token();
             }
 
-            expr.0.push(tok);
-            p = p.next_token();
-        }
+            (p, expr)
+        };
 
         return (
             p,
@@ -142,12 +165,21 @@ impl<'a> Parser<'a> {
         );
     }
 
-    fn expect_token(self, tok: Token) -> Self {
+    fn expect_token(self, tok: Token) -> (Self, bool) {
         return match self.cur.clone() {
-            None => self.with_err(Error::UnexpectedEof),
-            Some(cur) if cur != tok => self.with_err(Error::UnexpectedToken(cur, tok)),
-            _ => self.next_token(),
+            None => (self.with_err(Error::UnexpectedEof), true),
+            Some(cur) if cur != tok => (self.with_err(Error::UnexpectedToken(cur, tok)), true),
+            _ => (self.next_token(), false),
         };
+    }
+
+    /// Skip tokens while the condition is true.
+    fn skip_while(self, cond: impl Fn(Option<&Token>) -> bool) -> Self {
+        let mut p = self;
+        while cond(p.cur.as_ref()) {
+            p = p.next_token();
+        }
+        return p;
     }
 
     /// Add an error to the parser.
@@ -201,21 +233,21 @@ mod test {
                     ident: Ident {
                         token: T::Ident("x".into()),
                     },
-                    expr: Expression(vec![T::Assign, T::Int("5".into())]),
+                    expr: Expression(vec![T::Int("5".into())]),
                 }),
                 S::LetStatement(LetStatement {
                     token: T::Let,
                     ident: Ident {
                         token: T::Ident("_y".into()),
                     },
-                    expr: Expression(vec![T::Assign, T::Int("10".into())]),
+                    expr: Expression(vec![T::Int("10".into())]),
                 }),
                 S::LetStatement(LetStatement {
                     token: T::Let,
                     ident: Ident {
                         token: T::Ident("foobar".into()),
                     },
-                    expr: Expression(vec![T::Assign, T::Int("838383".into())]),
+                    expr: Expression(vec![T::Int("838383".into())]),
                 }),
             ],
         };
@@ -242,6 +274,7 @@ mod test {
         ];
 
         let (ast, err) = Parser::new(source).parse();
+        dbg!(&ast);
         assert_eq!(err, expected);
         assert!(ast.statements.is_empty());
     }
