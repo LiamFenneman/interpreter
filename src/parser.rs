@@ -7,7 +7,22 @@ use thiserror::Error;
 pub enum Statement {
     // IfStatement(IfStatement),
     LetStatement(LetStatement),
-    // ReturnStatement(ReturnStatement),
+    ReturnStatement(ReturnStatement),
+}
+
+/// A `let` statement.
+///
+/// Syntax: `let <identifier> = <expression>;`
+///
+/// # Example
+/// ```none
+/// let x = 5;
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LetStatement {
+    token: Token, // must be Token::Let
+    ident: Ident,
+    expr: Expression,
 }
 
 impl From<LetStatement> for Statement {
@@ -16,20 +31,41 @@ impl From<LetStatement> for Statement {
     }
 }
 
+/// A `return` statement.
+///
+/// Syntax: `return [<expression>];`
+///
+/// # Examples
+/// ```none
+/// return;
+/// return 5;
+/// return add(15);
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReturnStatement {
+    token: Token, // must be Token::Return
+    expr: Option<Expression>,
+}
+
+impl From<ReturnStatement> for Statement {
+    fn from(s: ReturnStatement) -> Self {
+        return Self::ReturnStatement(s);
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Expression(Vec<Token>);
+
+impl From<Vec<Token>> for Expression {
+    fn from(tokens: Vec<Token>) -> Self {
+        return Self(tokens);
+    }
+}
 
 /// The abstract syntax tree (AST).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ast {
     statements: Vec<Statement>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LetStatement {
-    token: Token, // must be Token::Let
-    ident: Ident,
-    expr: Expression,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,9 +133,19 @@ impl<'a> Parser<'a> {
                     ),
                 };
             }
+            Some(Token::Return) => {
+                let (p, s) = self.parse_return_statement();
+                return match s {
+                    Some(stmt) => (p, Some(stmt.into())),
+                    None => (
+                        p.skip_while(|t| t.is_some_and(|t| t.clone() != Token::Semicolon)),
+                        None,
+                    ),
+                };
+            }
             _ => match self.cur.clone() {
-                None => (self.with_err(Error::UnexpectedEof), None),
                 Some(tok) => (self.with_err(Error::InvalidToken(tok)), None),
+                None => unreachable!("don't try to parse when the current token is None"),
             },
         };
     }
@@ -116,7 +162,7 @@ impl<'a> Parser<'a> {
         // the next token should always be an `Ident`
         let Some(Token::Ident(ident)) = p.cur.clone() else {
             let err = match p.cur.clone() {
-                None => Error::UnexpectedEof,
+                None => Error::TokenNotFound,
                 Some(tok) => Error::InvalidToken(tok),
             };
 
@@ -130,44 +176,80 @@ impl<'a> Parser<'a> {
             return (p, None);
         }
 
-        // loop over all tokens until we find a semicolon
-        let (p, expr) = {
-            let mut p = p;
-            let mut expr = Expression(Vec::new());
+        let (p, expr) = p.parse_expression();
+        return match expr {
+            None => (p.with_err(Error::TokenNotFound), None),
+            Some(expr) => (
+                p,
+                Some(LetStatement {
+                    token: Token::Let,
+                    ident: Ident {
+                        token: Token::Ident(ident),
+                    },
+                    expr,
+                }),
+            ),
+        };
+    }
 
-            loop {
-                let Some(tok) = p.cur.clone() else {
-                p.errors.push(Error::UnexpectedEof);
+    fn parse_return_statement(self) -> (Self, Option<ReturnStatement>) {
+        let p = self;
+
+        // the current token is `Return`
+        let (p, err) = p.expect_token(Token::Return);
+        if err {
+            return (p, None);
+        }
+
+        let (p, expr) = p.parse_expression();
+
+        if p.errors.last() == Some(&Error::MissingSemicolon) {
+            return (p, None);
+        }
+        
+        return match expr {
+            None => (p, Some(ReturnStatement { token: Token::Return, expr: None })),
+            Some(_) => (
+                p,
+                Some(ReturnStatement {
+                    token: Token::Return,
+                    expr,
+                }),
+            ),
+        };
+    }
+
+    fn parse_expression(self) -> (Self, Option<Expression>) {
+        let mut p = self;
+        let mut expr = Expression(Vec::new());
+
+        // loop over all tokens until we find a semicolon (or EOF)
+        loop {
+            // an expression should always end with a semicolon
+            let Some(tok) = p.cur.clone() else {
+                p.errors.push(Error::MissingSemicolon);
                 return (p, None);
             };
 
-                if tok == Token::Semicolon {
-                    // Note: we don't add the semicolon here because it is not needed in the AST
-                    break;
-                }
-
-                expr.0.push(tok);
-                p = p.next_token();
+            if tok == Token::Semicolon {
+                // Note: we don't add the semicolon here because it is not needed in the AST
+                break;
             }
 
-            (p, expr)
-        };
+            expr.0.push(tok);
+            p = p.next_token();
+        }
 
-        return (
-            p,
-            Some(LetStatement {
-                token: Token::Let,
-                ident: Ident {
-                    token: Token::Ident(ident),
-                },
-                expr,
-            }),
-        );
+        // an expression must have at least one token
+        return match expr {
+            _ if expr.0.is_empty() => (p, None),
+            _ => (p, Some(expr)),
+        }
     }
 
     fn expect_token(self, tok: Token) -> (Self, bool) {
         return match self.cur.clone() {
-            None => (self.with_err(Error::UnexpectedEof), true),
+            None => (self.with_err(Error::TokenNotFound), true),
             Some(cur) if cur != tok => (self.with_err(Error::UnexpectedToken(cur, tok)), true),
             _ => (self.next_token(), false),
         };
@@ -200,9 +282,15 @@ pub enum Error {
     #[error("unexpected token: {0:?}, expected: {1:?}")]
     UnexpectedToken(Token, Token),
 
-    /// An unexpected end of file was found.
-    #[error("unexpected end of file")]
-    UnexpectedEof,
+    /// A token was expected but not found.
+    ///
+    /// This should not be used for semicolons. Use `MissingSemicolon` instead.
+    #[error("token not found")]
+    TokenNotFound,
+
+    /// Similar to `UnexpectedEof` but a semicolon is expected.
+    #[error("missing semicolon")]
+    MissingSemicolon,
 
     /// An invalid token was found.
     ///
@@ -258,6 +346,27 @@ mod test {
     }
 
     #[test]
+    fn return_stmts() {
+        let source = r"
+            return;
+            return 5;
+            return 10;
+            return 838383;
+        ";
+
+        let expected: Vec<Statement> = vec![
+            ReturnStatement { token: T::Return, expr: None }.into(),
+            ReturnStatement { token: T::Return, expr: Some(vec![T::Int("5".into())].into()) }.into(),
+            ReturnStatement { token: T::Return, expr: Some(vec![T::Int("10".into())].into()) }.into(),
+            ReturnStatement { token: T::Return, expr: Some(vec![T::Int("838383".into())].into()) }.into(),
+        ];
+
+        let (ast, err) = Parser::new(source).parse();
+        assert_eq!(ast.statements, expected);
+        assert!(err.is_empty());
+    }
+
+    #[test]
     fn errors() {
         use Error::*;
 
@@ -265,16 +374,20 @@ mod test {
             let x 5;
             let = 10;
             let 838383;
+            let x = ;
+            return
         ";
 
         let expected = vec![
             UnexpectedToken(T::Int("5".into()), T::Assign),
             InvalidToken(T::Assign),
             InvalidToken(T::Int("838383".into())),
+            TokenNotFound,
+            MissingSemicolon
         ];
 
         let (ast, err) = Parser::new(source).parse();
-        dbg!(&ast);
+        dbg!(&ast.statements);
         assert_eq!(err, expected);
         assert!(ast.statements.is_empty());
     }
