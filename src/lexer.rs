@@ -7,10 +7,19 @@ pub enum Token {
     // Identifiers + Literals
     Ident(String),
     Int(String),
+    Boolean(bool),
 
     // Operators
     Assign,
     Plus,
+    Minus,
+    Bang,
+    Asterisk,
+    Slash,
+    LessThan,
+    GreaterThan,
+    Equal,
+    NotEqual,
 
     // Delimiters
     Comma,
@@ -23,6 +32,9 @@ pub enum Token {
     // Keywords
     Function,
     Let,
+    If,
+    Else,
+    Return,
 
     // Special
     Illegal,
@@ -34,6 +46,11 @@ impl Token {
         return match str {
             "fn" => Some(Function),
             "let" => Some(Let),
+            "if" => Some(If),
+            "else" => Some(Else),
+            "return" => Some(Return),
+            "true" => Some(Boolean(true)),
+            "false" => Some(Boolean(false)),
             _ => Some(Ident(str.to_string())),
         };
     }
@@ -89,8 +106,16 @@ impl<'a> Lexer<'a> {
             None => (lexer, None),
             Some(ch) => match ch {
                 // Operators
-                '=' => (lexer.advance(), Some(Assign)),
                 '+' => (lexer.advance(), Some(Plus)),
+                '-' => (lexer.advance(), Some(Minus)),
+                '*' => (lexer.advance(), Some(Asterisk)),
+                '/' => (lexer.advance(), Some(Slash)),
+                '<' => (lexer.advance(), Some(LessThan)),
+                '>' => (lexer.advance(), Some(GreaterThan)),
+                '=' => lexer.if_peeked('=', Assign, Equal),
+                '!' => lexer.if_peeked('=', Bang, NotEqual),
+
+                // Delimiters
                 ',' => (lexer.advance(), Some(Comma)),
                 ';' => (lexer.advance(), Some(Semicolon)),
                 '(' => (lexer.advance(), Some(LParen)),
@@ -134,6 +159,13 @@ impl<'a> Lexer<'a> {
         }
 
         return lexer;
+    }
+
+    pub(crate) fn peek_char(self) -> Option<char> {
+        return match self.pos {
+            p if p + 1 >= self.input.len() => None,
+            _ => self.input.chars().nth(self.pos + 1),
+        };
     }
 
     /// Advance the lexer until the condition is false.
@@ -182,6 +214,20 @@ impl<'a> Lexer<'a> {
     pub(crate) fn is_number(ch: char) -> bool {
         return ch.is_numeric();
     }
+
+    /// Check if the next character is `next_ch`. If it is, return `matched`, otherwise return `default`.
+    pub(crate) fn if_peeked(
+        self,
+        next_ch: char,
+        default: Token,
+        matched: Token,
+    ) -> (Self, Option<Token>) {
+        let (lexer, token) = match self.peek_char() {
+            Some(peeked) if peeked == next_ch => (self.advance(), Some(matched)),
+            _ => (self, Some(default)),
+        };
+        return (lexer.advance(), token);
+    }
 }
 
 #[cfg(test)]
@@ -204,10 +250,23 @@ mod test {
 
     #[test]
     fn single_chars() {
-        let input = "=+(){},;";
+        let input = "=+-!*/<>(){},;";
 
         let tests = vec![
-            Assign, Plus, LParen, RParen, LBrace, RBrace, Comma, Semicolon,
+            Assign,
+            Plus,
+            Minus,
+            Bang,
+            Asterisk,
+            Slash,
+            LessThan,
+            GreaterThan,
+            LParen,
+            RParen,
+            LBrace,
+            RBrace,
+            Comma,
+            Semicolon,
         ];
 
         run_test(input, tests);
@@ -260,6 +319,65 @@ mod test {
             Comma,
             Ident("ten".into()),
             RParen,
+            Semicolon,
+        ];
+
+        run_test(input, tests);
+    }
+
+    #[test]
+    fn code2() {
+        let input = r"
+            if (5 < 10) {
+                return true;
+            } else {
+                return false;
+            }
+        ";
+
+        let tests = vec![
+            If,
+            LParen,
+            Int("5".into()),
+            LessThan,
+            Int("10".into()),
+            RParen,
+            LBrace,
+            Return,
+            Boolean(true),
+            Semicolon,
+            RBrace,
+            Else,
+            LBrace,
+            Return,
+            Boolean(false),
+            Semicolon,
+            RBrace,
+        ];
+
+        run_test(input, tests);
+    }
+    #[test]
+    fn code3() {
+        let input = r"
+            let a = 5 == 5;
+            let b = 5 != 6;
+        ";
+
+        let tests = vec![
+            Let,
+            Ident("a".into()),
+            Assign,
+            Int("5".into()),
+            Equal,
+            Int("5".into()),
+            Semicolon,
+            Let,
+            Ident("b".into()),
+            Assign,
+            Int("5".into()),
+            NotEqual,
+            Int("6".into()),
             Semicolon,
         ];
 
