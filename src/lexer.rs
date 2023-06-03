@@ -1,3 +1,6 @@
+//! The Lexer module.
+//!
+//! The lexer reads the input source code and turns it into tokens.
 #![allow(clippy::needless_return)]
 #![allow(dead_code)]
 
