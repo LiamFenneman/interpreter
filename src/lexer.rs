@@ -173,7 +173,8 @@ impl<'a> Lexer<'a> {
     pub(crate) fn seek_while(self, cond: impl Fn(char) -> bool) -> Self {
         let mut lexer = self;
 
-        // recursively loop until the condition is false or there are no characters left
+        // recursively loop until the condition is false or there are no
+        // characters left
         if let Some(ch) = lexer.ch {
             if cond(ch) {
                 lexer = lexer.advance();
@@ -185,7 +186,10 @@ impl<'a> Lexer<'a> {
     }
 
     /// Read characters while the condition is true.
-    pub(crate) fn read_while(self, cond: impl Fn(char) -> bool) -> (Self, String) {
+    pub(crate) fn read_while(
+        self,
+        cond: impl Fn(char) -> bool,
+    ) -> (Self, String) {
         let pos_start = self.pos;
         let lexer = self.seek_while(cond);
         let pos_end = lexer.pos;
@@ -216,7 +220,8 @@ impl<'a> Lexer<'a> {
         return ch.is_numeric();
     }
 
-    /// Check if the next character is `next_ch`. If it is, return `matched`, otherwise return `default`.
+    /// Check if the next character is `next_ch`. If it is, return `matched`,
+    /// otherwise return `default`.
     pub(crate) fn if_peeked(
         self,
         next_ch: char,
@@ -224,7 +229,9 @@ impl<'a> Lexer<'a> {
         matched: Token,
     ) -> (Self, Option<Token>) {
         let (lexer, token) = match self.peek_char() {
-            Some(peeked) if peeked == next_ch => (self.advance(), Some(matched)),
+            Some(peeked) if peeked == next_ch => {
+                (self.advance(), Some(matched))
+            }
             _ => (self, Some(default)),
         };
         return (lexer.advance(), token);

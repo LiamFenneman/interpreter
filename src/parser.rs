@@ -102,7 +102,8 @@ impl<'a> Parser<'a> {
         };
     }
 
-    /// Parse the source code into an AST using a recursive descent parser strategy.
+    /// Parse the source code into an AST using a recursive descent parser
+    /// strategy.
     pub fn parse(self) -> (Ast, Vec<Error>) {
         let mut ast = Ast {
             statements: Vec::new(),
@@ -128,7 +129,9 @@ impl<'a> Parser<'a> {
                 return match s {
                     Some(stmt) => (p, Some(stmt.into())),
                     None => (
-                        p.skip_while(|t| t.is_some_and(|t| t.clone() != Token::Semicolon)),
+                        p.skip_while(|t| {
+                            t.is_some_and(|t| t.clone() != Token::Semicolon)
+                        }),
                         None,
                     ),
                 };
@@ -138,14 +141,18 @@ impl<'a> Parser<'a> {
                 return match s {
                     Some(stmt) => (p, Some(stmt.into())),
                     None => (
-                        p.skip_while(|t| t.is_some_and(|t| t.clone() != Token::Semicolon)),
+                        p.skip_while(|t| {
+                            t.is_some_and(|t| t.clone() != Token::Semicolon)
+                        }),
                         None,
                     ),
                 };
             }
             _ => match self.cur.clone() {
                 Some(tok) => (self.with_err(Error::InvalidToken(tok)), None),
-                None => unreachable!("don't try to parse when the current token is None"),
+                None => unreachable!(
+                    "don't try to parse when the current token is None"
+                ),
             },
         };
     }
@@ -206,9 +213,15 @@ impl<'a> Parser<'a> {
         if p.errors.last() == Some(&Error::MissingSemicolon) {
             return (p, None);
         }
-        
+
         return match expr {
-            None => (p, Some(ReturnStatement { token: Token::Return, expr: None })),
+            None => (
+                p,
+                Some(ReturnStatement {
+                    token: Token::Return,
+                    expr: None,
+                }),
+            ),
             Some(_) => (
                 p,
                 Some(ReturnStatement {
@@ -232,7 +245,8 @@ impl<'a> Parser<'a> {
             };
 
             if tok == Token::Semicolon {
-                // Note: we don't add the semicolon here because it is not needed in the AST
+                // Note: we don't add the semicolon here because it is not
+                // needed in the AST
                 break;
             }
 
@@ -244,13 +258,15 @@ impl<'a> Parser<'a> {
         return match expr {
             _ if expr.0.is_empty() => (p, None),
             _ => (p, Some(expr)),
-        }
+        };
     }
 
     fn expect_token(self, tok: Token) -> (Self, bool) {
         return match self.cur.clone() {
             None => (self.with_err(Error::TokenNotFound), true),
-            Some(cur) if cur != tok => (self.with_err(Error::UnexpectedToken(cur, tok)), true),
+            Some(cur) if cur != tok => {
+                (self.with_err(Error::UnexpectedToken(cur, tok)), true)
+            }
             _ => (self.next_token(), false),
         };
     }
@@ -294,8 +310,8 @@ pub enum Error {
 
     /// An invalid token was found.
     ///
-    /// This should be used when the expected token contains a value (e.g. Ident)
-    /// or when there is a range of valid tokens.
+    /// This should be used when the expected token contains a value (e.g.
+    /// Ident) or when there is a range of valid tokens.
     #[error("invalid identifier: {0:?}")]
     InvalidToken(Token),
 }
@@ -355,10 +371,26 @@ mod test {
         ";
 
         let expected: Vec<Statement> = vec![
-            ReturnStatement { token: T::Return, expr: None }.into(),
-            ReturnStatement { token: T::Return, expr: Some(vec![T::Int("5".into())].into()) }.into(),
-            ReturnStatement { token: T::Return, expr: Some(vec![T::Int("10".into())].into()) }.into(),
-            ReturnStatement { token: T::Return, expr: Some(vec![T::Int("838383".into())].into()) }.into(),
+            ReturnStatement {
+                token: T::Return,
+                expr: None,
+            }
+            .into(),
+            ReturnStatement {
+                token: T::Return,
+                expr: Some(vec![T::Int("5".into())].into()),
+            }
+            .into(),
+            ReturnStatement {
+                token: T::Return,
+                expr: Some(vec![T::Int("10".into())].into()),
+            }
+            .into(),
+            ReturnStatement {
+                token: T::Return,
+                expr: Some(vec![T::Int("838383".into())].into()),
+            }
+            .into(),
         ];
 
         let (ast, err) = Parser::new(source).parse();
@@ -383,7 +415,7 @@ mod test {
             InvalidToken(T::Assign),
             InvalidToken(T::Int("838383".into())),
             TokenNotFound,
-            MissingSemicolon
+            MissingSemicolon,
         ];
 
         let (ast, err) = Parser::new(source).parse();
